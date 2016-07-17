@@ -24,7 +24,7 @@
 2. `k_user`：需要kill 数据库哪个用户的连接。初始为 none ，表示不kill
 为具体的用户名时，会根据名字去 db_info 节读取相应的密码
 
-
+![killquery.log](http://ww1.sinaimg.cn/large/71d2c55bgw1f5wurlit9jj21kw0zk7wh.jpg)
 
 每次改动 kill_max_count，就会重新读取配置，即一个 clean start。所以改动其它配置项之后，同时需要更改这个值来生效。
 如果有新加入db，则需要重新启动脚步。

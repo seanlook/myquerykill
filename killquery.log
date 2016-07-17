@@ -1,0 +1,44 @@
+2016-07-17 13:17:07,922 [INFO ]       DBid1_user1 >> Starting kill query Thread: DBid1_user1
+2016-07-17 13:17:08,728 [INFO ]     DBid1_user2 >> Starting kill query Thread: DBid1_user2
+2016-07-17 13:17:09,532 [INFO ]       DBid2_user1 >> Starting kill query Thread: DBid2_user1
+2016-07-17 13:17:10,336 [INFO ]     DBid2_user2 >> Starting kill query Thread: DBid2_user2
+2016-07-17 13:17:28,160 [INFO ]       DBid1_user1 >> Max kill times changed, set a clean start
+2016-07-17 13:17:28,161 [INFO ]       DBid1_user1 >> I'm not the set k_user: user2
+2016-07-17 13:17:28,892 [INFO ]     DBid1_user2 >> Max kill times changed, set a clean start
+2016-07-17 13:17:28,893 [INFO ]     DBid1_user2 >> Read kill thread config: KILL {'k_sleep': '0', 'k_user': 'user2', 'k_longtime': '10', 'k_lock': '1'}
+2016-07-17 13:17:29,134 [INFO ]     DBid1_user2 >> SQL to find threads: select * from information_schema.processlist where 1  and user='user2' and command != 'Sleep'  and ( 0  or time > 10 or state = 'Locked' ) order by time desc
+2016-07-17 13:17:29,187 [INFO ]     DBid1_user2 >> No threads to kill
+2016-07-17 13:17:29,749 [INFO ]       DBid2_user1 >> Max kill times changed, set a clean start
+2016-07-17 13:17:29,750 [INFO ]       DBid2_user1 >> Read kill thread config: KILL {'k_sleep': '1', 'k_user': 'user1', 'k_longtime': '10', 'k_lock': '1'}
+2016-07-17 13:17:30,075 [INFO ]       DBid2_user1 >> SQL to find threads: select * from information_schema.processlist where 1  and user='user1' and ( 0  or time > 10 or state = 'Locked' ) order by time desc
+2016-07-17 13:17:30,135 [WARNING]       DBid2_user1 >> Threads to be killed: 2019027 2018937 2018993 2018996 2051495 2113644 2019008 2018647 2018952 2018933 2017979 2018920 2018939 2017981 2017982 2017983
+2016-07-17 13:17:30,135 [INFO ]       DBid2_user1 >> Kill threads done
+2016-07-17 13:17:30,532 [INFO ]     DBid2_user2 >> Max kill times changed, set a clean start
+2016-07-17 13:17:30,533 [INFO ]     DBid2_user2 >> I'm not the set k_user: user1
+2016-07-17 13:17:58,182 [INFO ]       DBid1_user1 >> MySQL ping to keep session alive
+2016-07-17 13:17:59,212 [INFO ]     DBid1_user2 >> MySQL ping to keep session alive
+2016-07-17 13:18:00,157 [INFO ]       DBid2_user1 >> MySQL ping to keep session alive
+2016-07-17 13:18:00,561 [INFO ]     DBid2_user2 >> MySQL ping to keep session alive
+2016-07-17 13:18:09,261 [INFO ]     DBid1_user2 >> Max kill times changed, set a clean start
+2016-07-17 13:18:09,261 [INFO ]     DBid1_user2 >> kill_max_count=0, disable kill
+2016-07-17 13:18:10,209 [INFO ]       DBid2_user1 >> Max kill times changed, set a clean start
+2016-07-17 13:18:10,209 [INFO ]       DBid2_user1 >> kill_max_count=0, disable kill
+2016-07-17 13:18:10,611 [INFO ]     DBid2_user2 >> Max kill times changed, set a clean start
+2016-07-17 13:18:10,611 [INFO ]     DBid2_user2 >> kill_max_count=0, disable kill
+2016-07-17 13:18:13,232 [INFO ]       DBid1_user1 >> Max kill times changed, set a clean start
+2016-07-17 13:18:13,232 [INFO ]       DBid1_user1 >> kill_max_count=0, disable kill
+2016-07-17 13:18:30,222 [INFO ]       DBid2_user1 >> Max kill times changed, set a clean start
+2016-07-17 13:18:30,223 [INFO ]       DBid2_user1 >> Read kill thread config: KILL {'k_sleep': '1', 'k_user': 'user1', 'k_longtime': '10', 'k_lock': '1'}
+2016-07-17 13:18:30,560 [INFO ]       DBid2_user1 >> SQL to find threads: select * from information_schema.processlist where 1  and user='user1' and ( 0  or time > 10 or state = 'Locked' ) order by time desc
+2016-07-17 13:18:30,628 [INFO ]     DBid2_user2 >> Max kill times changed, set a clean start
+2016-07-17 13:18:30,629 [INFO ]     DBid2_user2 >> I'm not the set k_user: user1
+2016-07-17 13:18:30,873 [WARNING]       DBid2_user1 >> Threads to be killed: 2019027 2018937 2018993 2018996 2051495 2113644 2019008 2018647 2018952 2018933 2017979 2018920 2018939 2017981 2017982 2017983
+2016-07-17 13:18:30,873 [INFO ]       DBid2_user1 >> Kill threads done
+2016-07-17 13:18:33,247 [INFO ]       DBid1_user1 >> Max kill times changed, set a clean start
+2016-07-17 13:18:33,248 [INFO ]       DBid1_user1 >> I'm not the set k_user: none
+2016-07-17 13:18:34,279 [INFO ]     DBid1_user2 >> Max kill times changed, set a clean start
+2016-07-17 13:18:34,280 [INFO ]     DBid1_user2 >> I'm not the set k_user: none
+2016-07-17 13:18:53,267 [INFO ]       DBid1_user1 >> MySQL ping to keep session alive
+2016-07-17 13:18:54,295 [INFO ]     DBid1_user2 >> MySQL ping to keep session alive
+2016-07-17 13:18:55,651 [INFO ]     DBid2_user2 >> MySQL ping to keep session alive
+2016-07-17 13:18:55,891 [INFO ]       DBid2_user1 >> MySQL ping to keep session alive

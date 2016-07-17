@@ -153,7 +153,7 @@ def do_kill(conn, processlist_file, **kill_opt):
 
 def keep_long_session_kill(db_instance, db_user, threadName):
     logger.debug("Read database info from config: send.cmd.ini")
-    db_comm = dict(get_kill_options('send_cmd.ini', 'db_info'))
+    db_comm = dict(get_kill_options('mykill.ini', 'db_info'))
     db_host = db_comm[db_instance + '_host']
     #db_port = int(db_comm['db_port'])
     db_port = int(db_comm[db_instance + '_port'])
@@ -175,7 +175,7 @@ def keep_long_session_kill(db_instance, db_user, threadName):
         # to make ping not too often, set the counter to wait X times to CHECK_CONFIG_INTERVAL.
         check_ping_wait = 0
         while True:
-            kill_opt_global = dict(get_kill_options('send_cmd.ini', 'global'))
+            kill_opt_global = dict(get_kill_options('mykill.ini', 'global'))
             kill_max_count = int(kill_opt_global['kill_max_count'])
             # kill_max_count=0 means disable all kill
             logger.debug("Get Config max kill times: %d", kill_max_count)
@@ -208,7 +208,7 @@ def keep_long_session_kill(db_instance, db_user, threadName):
 
             # need kill (more)
             if kill_count < kill_max_count:
-                kill_opt = dict(get_kill_options('send_cmd.ini', db_instance))
+                kill_opt = dict(get_kill_options('mykill.ini', db_instance))
                 #logger.info("kill_count: %d, kill_max_count: %d", kill_count, kill_max_count)
 
                 pattern = re.compile(db_user)
