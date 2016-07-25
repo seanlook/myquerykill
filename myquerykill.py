@@ -1,4 +1,4 @@
-__author__ = 'seanlook.com'
+__author__ = 'sean'
 
 import MySQLdb
 import os,sys,time
@@ -50,7 +50,7 @@ def get_sqlThreads_str(**kwargs):
     k_lock = kwargs['k_lock']
     k_sleep = kwargs['k_sleep']
 
-    sqlstr = "select * from information_schema.processlist where 1 "
+    sqlstr = "select CONCAT('kill ', pl.ID, ';') AS killcmd, pl.* from information_schema.processlist pl where 1 "
     if k_user:
         sqlstr = sqlstr + " and user='" + k_user + "'"
 
@@ -72,8 +72,8 @@ def get_sqlThreads_str(**kwargs):
 
 # do something before really kill threads
 # like take snapshot of processlist and engine status that abnormal time for analysis later
-def before_kill(conn, processlist_file):
-    logger.debug("Gather info before kill using the same connection")
+def before_kill(conn, threadName):
+    logger.info("Gather info before kill using the same connection")
     str_fulllist = "show full processlist"
     str_status = "show engine innodb status"
     str_trx_lockwait = """
@@ -89,78 +89,90 @@ def before_kill(conn, processlist_file):
         INNER JOIN information_schema.innodb_trx b ON b.trx_id = w.blocking_trx_id
         INNER JOIN information_schema.innodb_trx r ON r.trx_id = w.requesting_trx_id
     """
-    cur = conn.cursor()
+    try:
+        cur = conn.cursor()
 
-    fo = open(processlist_file + ".status", "w")
+        kill_before_status = threadName + "_beforekill.snapshot"
+        fo = open(kill_before_status, "w")
 
-    logger.debug("Get 'show full processlist' to: %s", processlist_file + ".status")
-    cur.execute(str_fulllist)
-    rs = cur.fetchall()
-    for row in rs:
-        fo.write(str(row))
-        fo.write("\n")
-        #print row
+        logger.debug("Get 'show full processlist' to: %s", kill_before_status)
+        cur.execute(str_fulllist)
+        rs = cur.fetchall()
+        for row in rs:
+            fo.write(str(row))
+            fo.write("\n")
+            #print row
 
-    logger.debug("Get 'innodb_lock_waits' to: %s", processlist_file + ".status")
-    cur.execute(str_trx_lockwait)
-    rs = cur.fetchall()
-    for row in rs:
-        fo.write(str(row))
-        fo.write("\n")
-        #print row
+        logger.debug("Get 'innodb_lock_waits' to: %s", kill_before_status)
+        cur.execute(str_trx_lockwait)
+        rs = cur.fetchall()
+        for row in rs:
+            fo.write(str(row))
+            fo.write("\n")
+            #print row
 
-    logger.debug("Get 'show engine innodb status' to: %s", processlist_file + ".status")
-    cur.execute(str_status)
-    rs = cur.fetchone()
-    row = rs.__str__()
-    for line in row.split("\n"):
-        fo.write(str(line))
-        fo.write("\n")
-        #print line
+        logger.debug("Get 'show engine innodb status' to: %s", kill_before_status)
+        cur.execute(str_status)
+        rs = cur.fetchone()
+        row = rs.__str__()
+        for line in row.split("\n"):
+            fo.write(str(line))
+            fo.write("\n")
+            #print line
 
+        fo.close()
+    except MySQLdb.Error, e:
+        logger.critical('Error %d: %s', e.args[0], e.args[1])
+    finally:
+        cur.close()
 
-    fo.close()
-    cur.close()
 
 # run the kill with the given connection and kill options
-def do_kill(conn, processlist_file, **kill_opt):
+def do_kill(conn, threadName, **kill_opt):
     sqlstr = get_sqlThreads_str(**kill_opt)
     logger.info("SQL to find threads: %s", sqlstr)
 
-    cur = conn.cursor()
-    cur.execute(sqlstr)
+    try:
+        cur = conn.cursor()
+        cur.execute(sqlstr)
 
-    fo = open(processlist_file, "w")
+        processlist_file = "processlist_" + threadName + "_killed.txt"
+        fo = open(processlist_file, "w")
 
-    for row in cur.fetchall():
-        fo.write(row.__str__())
-        fo.write('\n')
-        # print  row
+        for row in cur.fetchall():
+            fo.write(row.__str__())
+            fo.write('\n')
+            # print  row
+        fo.close()
 
-    fo.close()
+        # exclude some threads that may meet the kill condition
+        shell_threads_to_kill = "grep -Evi '(Binlog|ecdba|Daemon)' " + processlist_file + "|awk -F , '{print $1}' |sed 's/^(//g' | xargs"
+        #shell_threads_to_kill = "awk -F , '{print $1}' " + processlist_file + "| sed 's/^(//g;s/L$//g' | xargs"
+        threads_to_kill = commands.getoutput(shell_threads_to_kill)
 
-    # exclude some threads that may meet the kill condition
-    # shell_threads_to_kill = "grep -Evi '(Binlog|ecdba)' " + processlist_file + "|awk -F , '{print $1}' | sed 's/^(//g;s/L$//g' | xargs"
-    shell_threads_to_kill = "awk -F , '{print $1}' " + processlist_file + "| sed 's/^(//g;s/L$//g' | xargs"
-    threads_to_kill = commands.getoutput(shell_threads_to_kill)
+        if len(threads_to_kill) > 0:
+            before_kill(conn, threadName)
+            logger.warn("Threads to be killed: %s", threads_to_kill)
+            #cur.execute(threads_to_kill)
+            logger.info("Kill threads done")
+        else:
+            logger.info("No threads to kill")
 
-    if len(threads_to_kill) > 0:
-        logger.warn("Threads to be killed: %s", threads_to_kill)
-        # cur.execute("kill ", threads_to_kill)
-        logger.info("Kill threads done")
-    else:
-        logger.info("No threads to kill")
+    except MySQLdb.Error, e:
+        logger.critical('Error %d: %s', e.args[0], e.args[1])
+    finally:
+        cur.close()
 
 def keep_long_session_kill(db_instance, db_user, threadName):
-    logger.debug("Read database info from config: send.cmd.ini")
+    logger.debug("Read database info from config: myquerykill.ini")
     db_comm = dict(get_kill_options('mykill.ini', 'db_info'))
     db_host = db_comm[db_instance + '_host']
-    #db_port = int(db_comm['db_port'])
-    db_port = int(db_comm[db_instance + '_port'])
+    db_port = int(db_comm['db_port'])
+    #db_port = int(db_comm[db_instance + '_port'])
     db_pass = db_comm['db_pass_'+db_user]
 
     # use the file to record killed threads for analysis later
-    processlist_file = "processlist_" + threadName + "_kill.txt"
+    processlist_file = "processlist_" + threadName + "_killed.txt"
     logger.debug("You Can find threads could be killed in %s", processlist_file)
     conn = ""
 
@@ -214,12 +226,17 @@ def keep_long_session_kill(db_instance, db_user, threadName):
                 pattern = re.compile(db_user)
                 # if pattern.match(kill_opt['k_user']):
                 # only kill the threads of user set by k_user in config file
+                myuserlist=kill_opt['k_user'].replace(' ', '').split(',')
+                if kill_opt['k_user'] == 'all':
+                    logger.debug("You have set k_user=all")
+                    kill_opt['k_user'] = db_user
                 if db_user == kill_opt['k_user']:
                     logger.info("Read kill thread config: KILL %s", str(kill_opt))
                     logger.debug("Current kill count: %d", kill_count)
 
-                    before_kill(conn, processlist_file)
-                    do_kill(conn, processlist_file, **kill_opt)
+                    #before_kill(conn, processlist_file)
+
+                    do_kill(conn, threadName, **kill_opt)
 
                     kill_count = kill_count + 1
                 else:
@@ -232,7 +249,6 @@ def keep_long_session_kill(db_instance, db_user, threadName):
             kill_max_count_last = kill_max_count
 
             time.sleep(CHECK_CONFIG_INTERVAL)
-
 
     except MySQLdb.Error, e:
         logger.critical('Error %d: %s', e.args[0], e.args[1])
@@ -260,21 +276,24 @@ class myThread(threading.Thread):
 
 
 if __name__ == '__main__':
-    db_instances = ['DBid1', 'DBid2']
-    db_users = ['user1', 'user2']
+    #db_instances = ['crm0', 'crm1', 'crm2', 'crm3']
+    db_instances = ['crm0']
+    db_users = ['ecuser']
     # start keep-session-kill threads for every user and db_instance
     for i in db_instances:
         for u in db_users:
-            # threadName like dbname_user
+            # threadName like dbnqqame_user
             thread_to_killquery = myThread(100, i + "_" + u, i, u)
             thread_to_killquery.start()
             time.sleep(0.8)
 
 
-# TODO
-# - regular match
-# - write file
-# - exception
-# - logfile rotate
-# - password encrytion
+#thread_crm0_ecweb.start()
+#thread_crm0_ecdbsvr.start()
+
+# regular match
+# write file
+# exception
+# logfile rotate
+# password encrytion
 
