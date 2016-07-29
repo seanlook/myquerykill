@@ -1,4 +1,4 @@
-__author__ = 'sean'
+__author__ = 'seanlook.com'
 
 import MySQLdb
 import os,sys,time
@@ -8,20 +8,21 @@ import threading
 import re
 import logging
 
+from logging.handlers import TimedRotatingFileHandler
+
 
 LOG_FILE = 'killquery.log'
-#handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1024*1024, backupCount=5)
-handler = logging.FileHandler(LOG_FILE)
-fmt = '%(asctime)s [%(levelname)-5s] %(threadName)16s >> %(message)s'
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-formatter = logging.Formatter(fmt)
+#handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1024*1024, backupCount=5)
+handler = TimedRotatingFileHandler(LOG_FILE, when='d', interval=1, backupCount=7)
+
+formatter = logging.Formatter('%(asctime)s [%(levelname)-5s] %(threadName)16s >> %(message)s')
+
 handler.setFormatter(formatter)
 
-
-#logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 logger.addHandler(handler)
-logger.setLevel(logging.INFO)
 
 # interval to check config file by seconds
 CHECK_CONFIG_INTERVAL = 5
@@ -93,7 +94,8 @@ def before_kill(conn, threadName):
         cur = conn.cursor()
 
         kill_before_status = threadName + "_beforekill.snapshot"
-        fo = open(kill_before_status, "w")
+        fo = open(kill_before_status, "a")
+        fo.write("\n\n##########  " + time.asctime() + "  ##########\n")
 
         logger.debug("Get 'show full processlist' to: %s", kill_before_status)
         cur.execute(str_fulllist)
@@ -128,7 +130,7 @@ def before_kill(conn, threadName):
 
 
 # run the kill with the given connection and kill options
-def do_kill(conn, threadName, **kill_opt):
+def do_kill(conn, threadName, kill_dry_run, **kill_opt):
     sqlstr = get_sqlThreads_str(**kill_opt)
     logger.info("SQL to find threads: %s", sqlstr)
 
@@ -153,7 +155,10 @@ def do_kill(conn, threadName, **kill_opt):
         if len(threads_to_kill) > 0:
             before_kill(conn, threadName)
             logger.warn("Threads to be killed: %s", threads_to_kill)
-            #cur.execute(threads_to_kill)
+            if kill_dry_run == 0:
+                cur.execute(threads_to_kill)
+            else:
+                logger.info("Run in dry_run=1 mode (do not kill really, but snapshot is taken.)")
             logger.info("Kill threads done")
         else:
             logger.info("No threads to kill")
@@ -188,8 +193,9 @@ def keep_long_session_kill(db_instance, db_user, threadName):
         check_ping_wait = 0
         while True:
             kill_opt_global = dict(get_kill_options('mykill.ini', 'global'))
-            kill_max_count = int(kill_opt_global['kill_max_count'])
             # kill_max_count=0 means disable all kill
+            kill_max_count = int(kill_opt_global['kill_max_count'])
+
             logger.debug("Get Config max kill times: %d", kill_max_count)
 
             if kill_max_count != kill_max_count_last:
@@ -228,15 +234,16 @@ def keep_long_session_kill(db_instance, db_user, threadName):
                 # only kill the threads of user set by k_user in config file
                 myuserlist=kill_opt['k_user'].replace(' ', '').split(',')
                 if kill_opt['k_user'] == 'all':
+                    myuserlist.append(db_user)
                     logger.debug("You have set k_user=all")
                     kill_opt['k_user'] = db_user
-                if db_user == kill_opt['k_user']:
+                if db_user in myuserlist:
                     logger.info("Read kill thread config: KILL %s", str(kill_opt))
                     logger.debug("Current kill count: %d", kill_count)
 
                     #before_kill(conn, processlist_file)
-
-                    do_kill(conn, threadName, **kill_opt)
+                    kill_dry_run = int(kill_opt_global['dry_run'])
+                    do_kill(conn, threadName, kill_dry_run, **kill_opt)
 
                     kill_count = kill_count + 1
                 else:
@@ -276,9 +283,9 @@ class myThread(threading.Thread):
 
 
 if __name__ == '__main__':
-    #db_instances = ['crm0', 'crm1', 'crm2', 'crm3']
-    db_instances = ['crm0']
-    db_users = ['ecuser']
+    db_instances = ['crm0', 'crm1', 'crm2', 'crm3']
+    #db_instances = ['crm0']
+    db_users = ['ecuser', 'ec_read']
     # start keep-session-kill threads for every user and db_instance
     for i in db_instances:
         for u in db_users:
