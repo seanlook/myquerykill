@@ -14,6 +14,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 import json
+import settings
+import prpcryptec
 
 from logging.handlers import TimedRotatingFileHandler
 
@@ -32,11 +34,12 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 # interval to check config file by seconds
-CHECK_CONFIG_INTERVAL = 5
-CHECK_PING_MULTI = 12
-CONFIG_FILE_PATH = 'mysqk.ini'
+#CHECK_CONFIG_INTERVAL = 5
+#CHECK_PING_MULTI = 12
+#CONFIG_FILE_PATH = 'mysqk.ini'
 
 THREAD_DATA = local()
+KEY_DB_AUTH = "WWWWWWW.scrm.com"
 
 # get configuration section
 # db_commkill: common config and can be overwritten (inherit)
@@ -44,7 +47,7 @@ THREAD_DATA = local()
 
 def get_setttings(sect):
     cf = ConfigParser.ConfigParser()
-    cf.read(CONFIG_FILE_PATH)
+    cf.read(settings.CONFIG_FILE_PATH)
 
     #o = cf.options(db_instance)
     # 获得具体 db实例的kill信息，section必须以 id_开头
@@ -53,7 +56,7 @@ def get_setttings(sect):
         try:
             v2 = dict(cf.items(sect))
         except ConfigParser.NoSectionError:
-            logger.debug("no section %s found in %s, use comm section", sect, CONFIG_FILE_PATH)
+            logger.debug("no section %s found in %s, use comm section", sect, settings.CONFIG_FILE_PATH)
             v2 = v1
 
         v2 = dict(v1, **v2)
@@ -308,14 +311,17 @@ def my_slowquery_kill(db_instance):
 
     # 登录db认证信息
     db_users = json.loads(db_commconfig["db_auth"])
+    db_users = settings.DB_AUTH
 
     # 每个db实例的多个用户维持各自的连接
     db_conns = {}
 
+    # db连接密码解密
+    pc = prpcryptec.prpcrypt(KEY_DB_AUTH)
     for db_user, db_pass in db_users.items():
-
+        dbpass_de = pc.decrypt(db_pass)
         try:
-            conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=db_pass, port=int(db_port))
+            conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=dbpass_de, port=int(db_port))
             db_conns[db_user] = conn
             logger.info("connection is created: %s:%s  %s", db_host, db_port, db_user)
 
@@ -361,16 +367,16 @@ def my_slowquery_kill(db_instance):
             THREAD_DATA.THREADS_TOKILL = set()
             kill_count = 0
 
-        time.sleep(CHECK_CONFIG_INTERVAL)
+        time.sleep(settings.CHECK_CONFIG_INTERVAL)
         # 维持其它用户连接的心跳，即使被kill也会被拉起
-        if check_ping_wait == CHECK_PING_MULTI:
+        if check_ping_wait == settings.CHECK_PING_MULTI:
             for dc in db_conns:
                 try:
                     logger.info("MySQL ping to keep session alive")
                     db_conns[dc].ping()
                 except MySQLdb.Error, e:
                     if e.args[0] == 2013:
-                        db_conns[dc] = MySQLdb.Connect(host=db_host, user=db_user, passwd=db_pass, port=int(db_port))
+                        db_conns[dc] = MySQLdb.Connect(host=db_host, user=db_user, passwd=pc.decrypt(db_pass), port=int(db_port))
                         logger.warn("Reconnect Database %s: host='%s', user='%s, port=%s",
                                     db_instance, db_host, db_user, db_port)
                     if e.args[0] == 2003:
