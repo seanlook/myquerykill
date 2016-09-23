@@ -45,11 +45,13 @@ KEY_DB_AUTH = "WWWWWWW.scrm.com"
 # db_commkill: common config and can be overwritten (inherit)
 # db_commconfig: common info and not inherit
 
-def get_setttings(sect):
+def get_setttings(sect, opt=''):
     cf = ConfigParser.ConfigParser()
     cf.read(settings.CONFIG_FILE_PATH)
 
-    #o = cf.options(db_instance)
+    if opt != '':
+        o = cf.get(sect, opt)
+        return o
     # 获得具体 db实例的kill信息，section必须以 id_开头
     if re.match('id_', sect):
         v1 = dict(cf.items("db_commkill"))
@@ -90,6 +92,7 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
     processlist_file = 'var/processlist_' + db_id + '.txt'
     logger.debug("get the information_schema.processlist on this moment: %s", processlist_file)
 
+    threads_tokill = {}
     try:
         cur = conn.cursor()
         sqlstr = "select * from information_schema.processlist order by time desc"
@@ -97,11 +100,13 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
         cur.execute(sqlstr)
         rs = cur.fetchall()
 
+    except MySQLdb.Error, e:
+        logger.critical("Get processlist connection error. Wait ping alive to reconnect.")
+    else:
         fo = open(processlist_file, "w")
         fo.write("\n\n################  " + time.asctime() + "  ################\n")
 
         logger.debug("check this conn thread according to kill_opt one by one")
-        threads_tokill = {}
 
         for row in rs:
 
@@ -114,16 +119,44 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
                 fo.write(str(row) + "\n")
             # print str(row)
 
-        #print threads_tokill, db_id
-    except Exception as inst:
-        logger.critical("Error %s %s", type(inst), inst.args.__str__())
-        #logger.critical("function get_processlist_kthreads error")
-
+        fo.close()
     finally:
         cur.close()
-        fo.close()
 
     return threads_tokill
+
+def db_reconnect(db_user, db_id):
+    db_pass = settings.DB_AUTH[db_user]
+    pc = prpcryptec.prpcrypt(KEY_DB_AUTH)
+
+    db_instance = get_setttings("db_info", db_id)
+    db_host, db_port = db_instance.replace(' ', '').split(':')
+
+    db_conn = None
+
+    while not db_conn:
+        try:
+            logger.warn("Reconnect Database %s: host='%s', user='%s, port=%s",
+                        db_id, db_host, db_user, db_port)
+            db_conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=pc.decrypt(db_pass), port=int(db_port),
+                                      connect_timeout=5)
+
+        except MySQLdb.Error, e:
+
+            if e.args[0] in (2013, 2003):
+                logger.critical('Error %d: %s', e.args[0], e.args[1])
+                logger.warn("Reconnect Database %s: host='%s', user='%s, port=%s",
+                            db_id, db_host, db_user, db_port)
+                db_conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=pc.decrypt(db_pass), port=int(db_port),
+                                          connect_timeout=5)
+
+        except Exception as inst:
+            print "Error %s %s" % type(inst), inst.args.__str__()
+
+        time.sleep(10)
+
+    return db_conn
+
 
 # judge this thread meet kill_opt or not
 def kill_judge(row, kill_opt):
@@ -239,10 +272,11 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
             try:
                 get_more_info(db_conns[process_user], db_id)
                 sendemail(db_id, ' (' + u + ') KILLED')
+
+                logger.info("(%s) run in dry_run=0 mode , do really kill, but the status snapshot is taken", u)
                 cur = db_conns[u].cursor()
                 cur.execute(kill_str)
                 logger.warn("(%s) kill-command has been executed : %s", u, kill_str)
-                cur.close()
             except MySQLdb.Error, e:
                 logger.critical('Error %d: %s', e.args[0], e.args[1])
             finally:
@@ -255,7 +289,7 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
             # 前后两次 threads_tokill里面有共同的id，则不发送邮件
             if thread_ids and not (THREAD_DATA.THREADS_TOKILL.get(u,set()) & thread_ids):
                 get_more_info(db_conns[process_user], db_id)
-                sendemail(db_id, 'NOT KILLED')
+                sendemail(db_id, ' (' + u + ') NOT KILLED')
 
         # store last threads(kill or not kill)
         THREAD_DATA.THREADS_TOKILL[u] = thread_ids
@@ -325,12 +359,13 @@ def my_slowquery_kill(db_instance):
     for db_user, db_pass in db_users.items():
         dbpass_de = pc.decrypt(db_pass)
         try:
-            conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=dbpass_de, port=int(db_port))
+            conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=dbpass_de, port=int(db_port), connect_timeout=5)
             db_conns[db_user] = conn
             logger.info("connection is created: %s:%s  %s", db_host, db_port, db_user)
 
         except MySQLdb.Error, e:
             logger.warn('Error %d: %s', e.args[0], e.args[1])
+            sys.exit(-1)
 
     kill_count = 0
     run_max_count_last = 0
@@ -374,17 +409,15 @@ def my_slowquery_kill(db_instance):
         time.sleep(settings.CHECK_CONFIG_INTERVAL)
         # 维持其它用户连接的心跳，即使被kill也会被拉起
         if check_ping_wait == settings.CHECK_PING_MULTI:
-            for dc in db_conns:
+            for dc_user in db_conns:
                 try:
-                    logger.info("(%s) MySQL ping to keep session alive", dc)
-                    db_conns[dc].ping()
+                    logger.info("(%s) MySQL ping to keep session alive", dc_user)
+                    db_conns[dc_user].ping()
                 except MySQLdb.Error, e:
-                    if e.args[0] == 2013:
-                        db_conns[dc] = MySQLdb.Connect(host=db_host, user=db_user, passwd=pc.decrypt(db_pass), port=int(db_port))
-                        logger.warn("Reconnect Database %s: host='%s', user='%s, port=%s",
-                                    db_instance, db_host, db_user, db_port)
-                    if e.args[0] == 2003:
-                        logger.warn("Error %s: %s . continue check", e.args[0], e.args[1])
+                    logger.critical('Error %d: %s', e.args[0], e.args[1])
+
+                    db_conns[dc_user] = db_reconnect(dc_user, db_id)
+
             check_ping_wait = 0
         else:
             check_ping_wait += 1
