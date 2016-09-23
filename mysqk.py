@@ -127,8 +127,7 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
 
 # judge this thread meet kill_opt or not
 def kill_judge(row, kill_opt):
-
-    if (row[1] in kill_opt['k_user'] or kill_opt['k_user'] == 'all') \
+    if (row[1] in kill_opt['k_user'] or 'all' in kill_opt['k_user']) \
             and not kill_opt['k_exclude'].search(str(row)):
 
         if kill_opt['k_include'].search(str(row)):
@@ -228,47 +227,52 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
 
     logger.warn("this threads COULD be killed: %s", threads_tokill.__str__())
 
+    process_user = db_commconfig['db_puser']
 
-    # 记录需要被 kill 的 thread_id
-    thread_ids = set()
+    # 记录需要被 kill 的 thread_id,主要用于判断是否重复发邮件
     for u, t_id in threads_tokill.items():
         kill_str = ";  ".join("kill %d" % t for t in t_id)
-        thread_ids = thread_ids | set(t_id)
+        thread_ids = set(t_id)
 
-    process_user = db_commconfig['db_puser']
-    # 明确设置dry_run=0才真正kill
-    if db_commconfig['dry_run'] == '0':
-        try:
-            get_more_info(db_conns[process_user], db_id)
-            sendemail(db_id, 'KILLED')
-            cur = db_conns[u].cursor()
-            cur.execute(kill_str)
-            logger.warn("kill-command has been executed : %s", kill_str)
-            cur.close()
-        except MySQLdb.Error, e:
-            logger.critical('Error %d: %s', e.args[0], e.args[1])
-        finally:
-            cur.close()
+        # 明确设置dry_run=0才真正kill
+        if db_commconfig['dry_run'] == '0':
+            try:
+                get_more_info(db_conns[process_user], db_id)
+                sendemail(db_id, ' (' + u + ') KILLED')
+                cur = db_conns[u].cursor()
+                cur.execute(kill_str)
+                logger.warn("(%s) kill-command has been executed : %s", u, kill_str)
+                cur.close()
+            except MySQLdb.Error, e:
+                logger.critical('Error %d: %s', e.args[0], e.args[1])
+            finally:
+                cur.close()
 
-    else:
-        # dry_run模式下可能会反复或者同样需被kill的thread
-        logger.info("run in dry_run=1 mode (do not kill, but take status snapshot the first time)")
+        else:
+            # dry_run模式下可能会反复或者同样需被kill的thread
+            logger.info("(%s) run in dry_run=1 mode , do not kill, but take status snapshot the first time", u)
 
-        # 前后两次 threads_tokill里面有共同的id，则不发送邮件
-        if thread_ids and not (THREAD_DATA.THREADS_TOKILL & thread_ids):
-            get_more_info(db_conns[process_user], db_id)
-            sendemail(db_id, 'NOT KILLED')
+            # 前后两次 threads_tokill里面有共同的id，则不发送邮件
+            if thread_ids and not (THREAD_DATA.THREADS_TOKILL.get(u,set()) & thread_ids):
+                get_more_info(db_conns[process_user], db_id)
+                sendemail(db_id, 'NOT KILLED')
 
-    # store last threads(kill or not kill)
-    THREAD_DATA.THREADS_TOKILL = thread_ids
+        # store last threads(kill or not kill)
+        THREAD_DATA.THREADS_TOKILL[u] = thread_ids
 
 # 邮件通知模块
 def sendemail(db_id, dry_run):
     MAIL_CONFIG = get_setttings('mail_config')
+    mail_receiver = MAIL_CONFIG['mail_receiver']
+
+    if mail_receiver == "":
+        logger.info("do not send email")
+        print "do not send email"
+        return
+
     mail_host = MAIL_CONFIG['mail_host']
     mail_user = MAIL_CONFIG['mail_user']
     mail_pass = MAIL_CONFIG['mail_pass']
-    mail_receiver = MAIL_CONFIG['mail_receiver']
 
     message = MIMEMultipart()
 
@@ -310,7 +314,7 @@ def my_slowquery_kill(db_instance):
     kill_opt = get_setttings("id_" + db_id)
 
     # 登录db认证信息
-    db_users = json.loads(db_commconfig["db_auth"])
+    #db_users = json.loads(db_commconfig["db_auth"])
     db_users = settings.DB_AUTH
 
     # 每个db实例的多个用户维持各自的连接
@@ -342,7 +346,7 @@ def my_slowquery_kill(db_instance):
             if run_max_count != run_max_count_last:
                 logger.info("you've changed run_max_count, set a clean start")
                 kill_count = 0
-                THREAD_DATA.THREADS_TOKILL = set()
+                THREAD_DATA.THREADS_TOKILL = {}
 
                 if run_max_count == 999:
                     logger.warn("you've set run_max_count=999 , always check processlist")
@@ -364,7 +368,7 @@ def my_slowquery_kill(db_instance):
         else:
             logger.debug("Not running in time window")
             # fix: 处理慢sql在夜间产生，并持续到白天的情况
-            THREAD_DATA.THREADS_TOKILL = set()
+            THREAD_DATA.THREADS_TOKILL = {}
             kill_count = 0
 
         time.sleep(settings.CHECK_CONFIG_INTERVAL)
@@ -372,7 +376,7 @@ def my_slowquery_kill(db_instance):
         if check_ping_wait == settings.CHECK_PING_MULTI:
             for dc in db_conns:
                 try:
-                    logger.info("MySQL ping to keep session alive")
+                    logger.info("(%s) MySQL ping to keep session alive", dc)
                     db_conns[dc].ping()
                 except MySQLdb.Error, e:
                     if e.args[0] == 2013:
@@ -398,7 +402,7 @@ class myThread(threading.Thread):
     def run(self):
         logger.info("Starting kill query Thread: %s", self.name)
         #THREAD_DATA.MAIL_SEND_TIMES = 0
-        THREAD_DATA.THREADS_TOKILL = set()
+        THREAD_DATA.THREADS_TOKILL = {}
 
         my_slowquery_kill(db_instance)
         logger.info("Exiting Thread: %s", self.name)
