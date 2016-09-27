@@ -39,7 +39,7 @@ logger.addHandler(handler)
 #CONFIG_FILE_PATH = 'mysqk.ini'
 
 THREAD_DATA = local()
-KEY_DB_AUTH = "WWWWWWW.scrm.com"
+KEY_DB_AUTH = "your_16_bytes_key"
 
 # get configuration section
 # db_commkill: common config and can be overwritten (inherit)
@@ -301,7 +301,6 @@ def sendemail(db_id, dry_run):
 
     if mail_receiver == "":
         logger.info("do not send email")
-        print "do not send email"
         return
 
     mail_host = MAIL_CONFIG['mail_host']
@@ -330,6 +329,8 @@ def sendemail(db_id, dry_run):
         smtpObj.ehlo()
         smtpObj.login(mail_user, mail_pass)
         smtpObj.sendmail(mail_user, mail_receiver, message.as_string())
+
+        logger.info("Email sending succeed")
     except smtplib.SMTPException:
         logger.critical( "Error: 发送邮件失败")
     finally:

@@ -75,6 +75,9 @@ if __name__ == '__main__':
             crypt_type = 1
             print ">> Encrypt the string: %s" % a
 
+    if key == "":
+        print "Error: -k <keystring> MUST be given"
+        sys.exit(2)
     if crypt_str == "":
         print "Error: either -d or -e MUST be given"
         sys.exit(2)
@@ -86,7 +89,8 @@ if __name__ == '__main__':
         else:
             print pc.encrypt(crypt_str)
         print ""
-    except:
+    except Exception as inst:
         print "Error: Incorrect option or value givien"
+        print "Error %s %s" % type(inst), inst.args.__str__()
         usage()
 
