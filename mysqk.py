@@ -82,7 +82,10 @@ def get_setttings(sect, opt=''):
         # 运行的时间窗口，取得开始和结束时间
         if 'run_time_window' in v2:
             run_time_window = v2['run_time_window'].replace(' ', '').split('-')
-            v2['run_time_window'] = run_time_window
+            if len(run_time_window) != 2:
+                v2['run_time_window'] = []
+            else:
+                v2['run_time_window'] = run_time_window
 
     return v2
 
@@ -377,7 +380,8 @@ def my_slowquery_kill(db_instance):
 
         # 查看processlist连接的作为心跳
         # 如果数据库端 kill掉这个用户的连接，该实例检查则异常退出
-        if db_commconfig['run_time_window'][0] < datetime.datetime.now().strftime("%H:%M") < db_commconfig['run_time_window'][1]:
+        if (db_commconfig['run_time_window'][0] < datetime.datetime.now().strftime("%H:%M") < db_commconfig['run_time_window'][1])
+                or len(db_commconfig['run_time_window']) == 0:
             run_max_count = int(db_commconfig['run_max_count'])
             if run_max_count != run_max_count_last:
                 logger.info("you've changed run_max_count, set a clean start")
