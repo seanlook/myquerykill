@@ -2,7 +2,7 @@
 __author__ = 'seanlook.com'
 
 import MySQLdb
-import os,sys,time,datetime
+import os, sys, time, datetime
 import commands
 import ConfigParser
 import threading
@@ -14,6 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 import json
+from collections import defaultdict
 import settings
 import prpcryptec
 
@@ -33,18 +34,12 @@ handler.setFormatter(formatter)
 
 logger.addHandler(handler)
 
-# interval to check config file by seconds
-#CHECK_CONFIG_INTERVAL = 5
-#CHECK_PING_MULTI = 12
-#CONFIG_FILE_PATH = 'mysqk.ini'
-
 THREAD_DATA = local()
-KEY_DB_AUTH = "your_16_bytes_key"
+#KEY_DB_AUTH = "your_16_bytes_key"
 
 # get configuration section
 # db_commkill: common config and can be overwritten (inherit)
 # db_commconfig: common info and not inherit
-
 def get_setttings(sect, opt=''):
     cf = ConfigParser.ConfigParser()
     cf.read(settings.CONFIG_FILE_PATH)
@@ -95,7 +90,7 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
     processlist_file = 'var/processlist_' + db_id + '.txt'
     logger.debug("get the information_schema.processlist on this moment: %s", processlist_file)
 
-    threads_tokill = {}
+    threads_tokill = defaultdict(list)
     try:
         cur = conn.cursor()
         sqlstr = "select * from information_schema.processlist order by time desc"
@@ -115,8 +110,8 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
 
             iskill_thread = kill_judge(row, kill_opt)
             if iskill_thread > 0:
-                if row[1] not in threads_tokill:
-                    threads_tokill[row[1]] = []
+             #   if row[1] not in threads_tokill:
+             #       threads_tokill[row[1]] = []
                 threads_tokill[row[1]].append(iskill_thread)
 
                 fo.write(str(row) + "\n")
@@ -142,7 +137,7 @@ def db_reconnect(db_user, db_id):
             logger.warn("Reconnect Database %s: host='%s', user='%s, port=%s",
                         db_id, db_host, db_user, db_port)
             db_conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=pc.decrypt(db_pass), port=int(db_port),
-                                      connect_timeout=5)
+                                      connect_timeout=5, use_unicode=False)
 
         except MySQLdb.Error, e:
 
@@ -151,7 +146,7 @@ def db_reconnect(db_user, db_id):
                 logger.warn("Reconnect Database %s: host='%s', user='%s, port=%s",
                             db_id, db_host, db_user, db_port)
                 db_conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=pc.decrypt(db_pass), port=int(db_port),
-                                          connect_timeout=5)
+                                          connect_timeout=5, use_unicode=False)
 
         except Exception as inst:
             print "Error %s %s" % type(inst), inst.args.__str__()
@@ -184,7 +179,7 @@ def kill_judge(row, kill_opt):
 
 # take snapshot to gather more info before kill
 def get_more_info(conn, threadName):
-    logger.info("Gather info before kill using the same connection")
+    logger.info("Gather info before kill using the same connection START")
 
     str_fulllist = "show full processlist"
     str_status = "show engine innodb status"
@@ -227,6 +222,8 @@ def get_more_info(conn, threadName):
 
         logger.debug("Get 'innodb_lock_waits' to: %s", snapshot_file)
         fo.write("\n\n######## innodb_lock_waits : ########\n")
+        fo.write("waiting_trx_id waiting_thread waiting_query wait_started operation_state"
+                 "  blocking_trx_id blocking_thread blocking_query trx_started rows_locked tables_locked isolation_level\n")
         cur.execute(str_trx_lockwait)
         rs = cur.fetchall()
         for row in rs:
@@ -238,11 +235,8 @@ def get_more_info(conn, threadName):
         fo.write("\n\n######## show engine innodb status : ########\n")
         cur.execute(str_status)
         rs = cur.fetchone()
-        row = rs.__str__()
-        for line in row.split("\n"):
-            fo.write(str(line))
-            fo.write("\n")
-            #print line
+
+        fo.write(rs[2])
 
         fo.close()
     except MySQLdb.Error, e:
@@ -301,6 +295,7 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
 def sendemail(db_id, dry_run):
     MAIL_CONFIG = get_setttings('mail_config')
     mail_receiver = MAIL_CONFIG['mail_receiver']
+    mailenv = MAIL_CONFIG['env']
 
     if mail_receiver == "":
         logger.info("do not send email")
@@ -314,28 +309,31 @@ def sendemail(db_id, dry_run):
 
     message['From'] = Header('mysql', 'utf-8')
     message['To'] = Header('DBA', 'utf-8')
-    subject = '(Testenv) ' + db_id + ' slow query has been take snapshot'
+    subject = '(%s) %s slow query has been take snapshot' % (mailenv, db_id)
     message['Subject'] = Header(subject, 'utf-8')
 
     message.attach(MIMEText('db有慢查询, threads <strong>' + dry_run + '</strong> <br/>', 'html', 'utf-8'))
     message.attach(MIMEText('<br/>You can find more info(snapshot) in file: <strong> var/snapshot_' +
-                            db_id + '.txt </strong>', 'html', 'utf-8'))
-    att1 = MIMEText(open("var/processlist_"+db_id+'.txt', 'rb').read(), 'base64', 'utf-8')
-    att1["Content-Type"] = 'application/octet-stream'
-    att1["Content-Disposition"] = 'attachment; filename="var/processlist_' + db_id + '.txt"'
+                            db_id + '.txt </strong> processlist:<br/><br/>', 'html', 'utf-8'))
+
+    with open("var/processlist_"+db_id+'.txt', 'rb')as f:
+        filecontent = f.readlines()
+    att1 = MIMEText("<br/>".join(filecontent), 'html', 'utf-8')
+    #att1["Content-Type"] = 'application/octet-stream'
+    #att1["Content-Disposition"] = 'attachment; filename="var/processlist_' + db_id + '.txt"'
     message.attach(att1)
 
-
     try:
-        smtpObj = smtplib.SMTP()
-        smtpObj.connect(mail_host, 25)
+        smtpObj = smtplib.SMTP(mail_host, port=25, timeout=3)
+        # smtpObj.connect(mail_host, 25)
         smtpObj.ehlo()
         smtpObj.login(mail_user, mail_pass)
         smtpObj.sendmail(mail_user, mail_receiver, message.as_string())
 
         logger.info("Email sending succeed")
-    except smtplib.SMTPException:
-        logger.critical( "Error: 发送邮件失败")
+    except smtplib.SMTPException, err:
+        logger.critical("Error email content: %s", message.as_string())
+        logger.critical("Error: 发送邮件失败(%s, %s)", err[0], err[1].__str__())
     finally:
         smtpObj.quit()
 
@@ -363,7 +361,7 @@ def my_slowquery_kill(db_instance):
     for db_user, db_pass in db_users.items():
         dbpass_de = pc.decrypt(db_pass)
         try:
-            conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=dbpass_de, port=int(db_port), connect_timeout=5)
+            conn = MySQLdb.Connect(host=db_host, user=db_user, passwd=dbpass_de, port=int(db_port), connect_timeout=5, use_unicode=False)
             db_conns[db_user] = conn
             logger.info("connection is created: %s:%s  %s", db_host, db_port, db_user)
 
@@ -380,7 +378,7 @@ def my_slowquery_kill(db_instance):
 
         # 查看processlist连接的作为心跳
         # 如果数据库端 kill掉这个用户的连接，该实例检查则异常退出
-        if (db_commconfig['run_time_window'][0] < datetime.datetime.now().strftime("%H:%M") < db_commconfig['run_time_window'][1])
+        if (db_commconfig['run_time_window'][0] < datetime.datetime.now().strftime("%H:%M") < db_commconfig['run_time_window'][1])\
                 or len(db_commconfig['run_time_window']) == 0:
             run_max_count = int(db_commconfig['run_max_count'])
             if run_max_count != run_max_count_last:
