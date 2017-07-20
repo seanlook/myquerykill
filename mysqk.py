@@ -17,6 +17,7 @@ import json
 from collections import defaultdict
 import settings
 import prpcryptec
+from warnings import filterwarnings, resetwarnings
 
 from logging.handlers import TimedRotatingFileHandler
 
@@ -24,15 +25,13 @@ from logging.handlers import TimedRotatingFileHandler
 LOG_FILE = 'killquery.log'
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
 #handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1024*1024, backupCount=5)
 handler = TimedRotatingFileHandler(LOG_FILE, when='d', interval=1, backupCount=7)
-
 formatter = logging.Formatter('%(asctime)s [%(levelname)-7s] %(threadName)6s >> %(message)s')
-
 handler.setFormatter(formatter)
-
 logger.addHandler(handler)
+
+filterwarnings('ignore', category=MySQLdb.Warning) 
 
 THREAD_DATA = local()
 #KEY_DB_AUTH = "your_16_bytes_key"
@@ -114,7 +113,7 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
              #       threads_tokill[row[1]] = []
                 threads_tokill[row[1]].append(iskill_thread)
 
-                fo.write(str(row) + "\n")
+                fo.write(", ".join(map(str, row)) + "\n")
             # print str(row)
 
         fo.close()
@@ -159,7 +158,7 @@ def db_reconnect(db_user, db_id):
 # judge this thread meet kill_opt or not
 def kill_judge(row, kill_opt):
     if (row[1] in kill_opt['k_user'] or 'all' in kill_opt['k_user']) \
-            and not kill_opt['k_exclude'].search(str(row)):
+            and not kill_opt['k_exclude'].search(str(row)):  # exclude have high priority
 
         if kill_opt['k_include'].search(str(row)):
             return int(row[0])
@@ -170,8 +169,10 @@ def kill_judge(row, kill_opt):
             return int(row[0])
         elif row[4] != 'Sleep':
             if 0 < int(kill_opt['k_longtime']) < row[5]:
+                if row[1] not in settings.DB_AUTH.keys():
+                    logger.warn("You may have set all users to kill, but %s is not in DB_AUTH list. Skip thread %d : %s ", row[1], row[0], row[7])
+                    return 0
                 return int(row[0])
-
         return 0
     else:
         return 0
@@ -276,7 +277,6 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
                 logger.warn("(%s) kill-command has been executed : %s", u, kill_str)
             except MySQLdb.Error, e:
                 logger.critical('Error %d: %s', e.args[0], e.args[1])
-            finally:
                 cur.close()
 
         else:
@@ -294,7 +294,7 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
 # 邮件通知模块
 def sendemail(db_id, dry_run):
     MAIL_CONFIG = get_setttings('mail_config')
-    mail_receiver = MAIL_CONFIG['mail_receiver']
+    mail_receiver = MAIL_CONFIG['mail_receiver'].split(";")
     mailenv = MAIL_CONFIG['env']
 
     if mail_receiver == "":
@@ -367,7 +367,7 @@ def my_slowquery_kill(db_instance):
 
         except MySQLdb.Error, e:
             logger.warn('Error %d: %s', e.args[0], e.args[1])
-            sys.exit(-1)
+            logger.warn('  User %s may not exist in DB %s . Skip it for you.', db_user, db_host)
 
     kill_count = 0
     run_max_count_last = 0
