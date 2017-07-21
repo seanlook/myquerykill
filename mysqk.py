@@ -18,9 +18,8 @@ from collections import defaultdict
 import settings
 import prpcryptec
 from warnings import filterwarnings, resetwarnings
-
 from logging.handlers import TimedRotatingFileHandler
-
+from snapshot_report import write_mail_content_html
 
 LOG_FILE = 'killquery.log'
 logger = logging.getLogger(__name__)
@@ -102,20 +101,23 @@ def get_processlist_kthreads(conn, kill_opt, db_id):
     else:
         fo = open(processlist_file, "w")
         fo.write("\n\n################  " + time.asctime() + "  ################\n")
+        fo.write("""
+            <style> .mytable,.mytable th,.mytable td {
+                font-size:0.8em;    text-align:left;    padding:4px;    border-collapse:collapse;
+            } </style>
+            <table class='mytable'> <tr><th>thread_id</th><th>user</th><th>host</th><th>db</th><th>command</th><th>time</th><th>state</th><th>info</th></tr> 
+        """)
 
         logger.debug("check this conn thread according to kill_opt one by one")
 
         for row in rs:
-
             iskill_thread = kill_judge(row, kill_opt)
             if iskill_thread > 0:
-             #   if row[1] not in threads_tokill:
-             #       threads_tokill[row[1]] = []
                 threads_tokill[row[1]].append(iskill_thread)
 
-                fo.write(", ".join(map(str, row)) + "\n")
+                fo.write("<tr><td>" + "</td> <td>".join(map(str, row)) + "</td></tr>\n")
             # print str(row)
-
+        fo.write("</table>")
         fo.close()
     finally:
         cur.close()
@@ -182,26 +184,34 @@ def kill_judge(row, kill_opt):
 def get_more_info(conn, threadName):
     logger.info("Gather info before kill using the same connection START")
 
-    str_fulllist = "show full processlist"
+    str_fulllist = "select * from information_schema.processlist"
     str_status = "show engine innodb status"
     str_trx_lockwait = """
         SELECT
-        	r.trx_id waiting_trx_id,
-        	r.trx_mysql_thread_id waiting_thread,
-        	r.trx_query waiting_query,
-        	r.trx_wait_started,
-        	r.trx_operation_state,
-        	b.trx_id blocking_trx_id,
-        	b.trx_mysql_thread_id blocking_thread,
-        	b.trx_query blocking_query,
-        	b.trx_started,
-        	b.trx_rows_locked,
-        	b.trx_tables_locked,
-        	b.trx_isolation_level
+            tx.trx_id, 'Blocker' role, p.id thread_id, p.`USER` dbuser,
+            LEFT (p.`HOST`, locate(':', p.`HOST`)-1) host_remote,
+            tx.trx_state,   tx.trx_operation_state, tx.trx_rows_locked, tx.trx_lock_structs,    tx.trx_started,
+            timestampdiff(SECOND, tx.trx_started, now()) duration,
+            lo.lock_mode, lo.lock_type, lo.lock_table, lo.lock_index, lo.lock_data, tx.trx_query,
+            NULL as blocking_trx_id
         FROM
-        	information_schema.innodb_lock_waits w
-        INNER JOIN information_schema.innodb_trx b ON b.trx_id = w.blocking_trx_id
-        INNER JOIN information_schema.innodb_trx r ON r.trx_id = w.requesting_trx_id
+            information_schema.innodb_trx tx
+            INNER JOIN information_schema.innodb_lock_waits lw ON lw.blocking_trx_id = tx.trx_id
+            INNER JOIN information_schema.innodb_locks lo ON lo.lock_id = lw.blocking_lock_id
+            INNER JOIN information_schema.`PROCESSLIST` p ON p.id = tx.trx_mysql_thread_id
+        UNION ALL
+        SELECT
+            tx.trx_id, 'Blockee' role, p.id thread_id, p.`USER` dbuser,
+            LEFT(p.`HOST`, locate(':', p.`HOST`)-1) host_remote,
+            tx.trx_state, tx.trx_operation_state, tx.trx_rows_locked, tx.trx_lock_structs, tx.trx_started,
+            timestampdiff(SECOND, tx.trx_started, now()) duration,
+            lo.lock_mode, lo.lock_type, lo.lock_table, lo.lock_index, lo.lock_data, tx.trx_query,
+            lw.blocking_trx_id
+        FROM
+            information_schema.innodb_trx tx 
+            INNER JOIN information_schema.innodb_lock_waits lw ON lw.requesting_trx_id = tx.trx_id
+            INNER JOIN information_schema.innodb_locks lo ON lo.lock_id = lw.requested_lock_id 
+            INNER JOIN information_schema.`PROCESSLIST` p ON p.id = tx.trx_mysql_thread_id
     """
     try:
         cur = conn.cursor()
@@ -212,34 +222,32 @@ def get_more_info(conn, threadName):
         fo.write("##############  " + time.asctime() + "  ##############\n")
         fo.write("######################################################\n")
 
-
         logger.debug("Get 'show full processlist' to: %s", snapshot_file)
         fo.write("\n######## show full processlist : ########\n")
         cur.execute(str_fulllist)
-        rs = cur.fetchall()
-        for row in rs:
-            fo.write(str(row))
-            fo.write("\n")
+        rs_1 = cur.fetchall()
+        for row in rs_1:
+            fo.write("[[ " + ",\t".join(map(str, row)) + " ]]\n")
 
         logger.debug("Get 'innodb_lock_waits' to: %s", snapshot_file)
         fo.write("\n\n######## innodb_lock_waits : ########\n")
-        fo.write("waiting_trx_id waiting_thread waiting_query wait_started operation_state"
-                 "  blocking_trx_id blocking_thread blocking_query trx_started rows_locked tables_locked isolation_level\n")
+        fo.write("trx_id, role, thread_id, dbuser, host_remote, trx_state, trx_operation_state, trx_rows_locked, trx_lock_structs, "
+                 "trx_started, duration, lock_mode, lock_type, lock_table, lock_index, lock_data, trx_query, blocking_trx_id\n")
         cur.execute(str_trx_lockwait)
-        rs = cur.fetchall()
-        for row in rs:
-            fo.write(str(row))
-            fo.write("\n")
-
+        rs_0 = cur.fetchall()
+        for row in rs_0:
+            fo.write("[[ " + ",\t".join(map(str, row)) + " ]]\n")
 
         logger.debug("Get 'show engine innodb status' to: %s", snapshot_file)
         fo.write("\n\n######## show engine innodb status : ########\n")
         cur.execute(str_status)
-        rs = cur.fetchone()
-
-        fo.write(rs[2])
+        rs_2 = cur.fetchone()
+        fo.write(rs_2[2])
 
         fo.close()
+        snapshot_file_html = "var/snapshot_" + threadName + ".html"
+        snapshot_html = write_mail_content_html(snapshot_file_html, rs_0, rs_1, rs_2[2].replace('\n', '<br/>'))
+        return snapshot_html  # filename
     except MySQLdb.Error, e:
         logger.critical('Error %d: %s', e.args[0], e.args[1])
     finally:
@@ -268,8 +276,8 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
         # 明确设置dry_run=0才真正kill
         if db_commconfig['dry_run'] == '0':
             try:
-                get_more_info(db_conns[process_user], db_id)
-                sendemail(db_id, ' (' + u + ') KILLED')
+                snapshot_html = get_more_info(db_conns[process_user], db_id)
+                sendemail(db_id, ' (' + u + ') KILLED', snapshot_html)
 
                 logger.info("(%s) run in dry_run=0 mode , do really kill, but the status snapshot is taken", u)
                 cur = db_conns[u].cursor()
@@ -278,21 +286,20 @@ def kill_threads(threads_tokill, db_conns, db_id, db_commconfig):
             except MySQLdb.Error, e:
                 logger.critical('Error %d: %s', e.args[0], e.args[1])
                 cur.close()
-
         else:
             # dry_run模式下可能会反复或者同样需被kill的thread
             logger.info("(%s) run in dry_run=1 mode , do not kill, but take status snapshot the first time", u)
 
             # 前后两次 threads_tokill里面有共同的id，则不发送邮件
             if thread_ids and not (THREAD_DATA.THREADS_TOKILL.get(u,set()) & thread_ids):
-                get_more_info(db_conns[process_user], db_id)
-                sendemail(db_id, ' (' + u + ') NOT KILLED')
+                snapshot_html = get_more_info(db_conns[process_user], db_id)
+                sendemail(db_id, ' (' + u + ') NOT KILLED', snapshot_html)
 
         # store last threads(kill or not kill)
         THREAD_DATA.THREADS_TOKILL[u] = thread_ids
 
 # 邮件通知模块
-def sendemail(db_id, dry_run):
+def sendemail(db_id, dry_run, filename=''):
     MAIL_CONFIG = get_setttings('mail_config')
     mail_receiver = MAIL_CONFIG['mail_receiver'].split(";")
     mailenv = MAIL_CONFIG['env']
@@ -313,15 +320,18 @@ def sendemail(db_id, dry_run):
     message['Subject'] = Header(subject, 'utf-8')
 
     message.attach(MIMEText('db有慢查询, threads <strong>' + dry_run + '</strong> <br/>', 'html', 'utf-8'))
-    message.attach(MIMEText('<br/>You can find more info(snapshot) in file: <strong> var/snapshot_' +
-                            db_id + '.txt </strong> processlist:<br/><br/>', 'html', 'utf-8'))
+    message.attach(MIMEText('<br/>You can find more info(snapshot) in the attachment : <strong> ' +
+                            filename + ' </strong> processlist:<br/><br/>', 'html', 'utf-8'))
 
     with open("var/processlist_"+db_id+'.txt', 'rb')as f:
+    # with open(filename, 'rb')as f:
         filecontent = f.readlines()
     att1 = MIMEText("<br/>".join(filecontent), 'html', 'utf-8')
-    #att1["Content-Type"] = 'application/octet-stream'
-    #att1["Content-Disposition"] = 'attachment; filename="var/processlist_' + db_id + '.txt"'
+    att2 = MIMEText(open(filename, 'rb').read(), 'base64', 'utf-8')
+    att2["Content-Type"] = 'application/octet-stream'
+    att2["Content-Disposition"] = 'attachment; filename=%s' % filename
     message.attach(att1)
+    message.attach(att2)
 
     try:
         smtpObj = smtplib.SMTP(mail_host, port=25, timeout=3)
